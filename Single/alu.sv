@@ -1,0 +1,118 @@
+`include "cpu_types_pkg.vh"
+`include "alu_if.vh"
+
+module alu
+import cpu_types_pkg::*;
+(
+ input logic  CLK, nRST,
+ alu_if.aluf aluf
+);   
+   word_t pout;
+   logic nf, zf, of;
+  always_comb begin
+
+    if(aluf.opcode==ALU_SLL)//sl
+    begin
+	pout=aluf.port_a<<aluf.port_b;
+	of=0;
+    end
+    else if(aluf.opcode==ALU_SRL)//sl
+    begin
+	pout=aluf.port_a>>aluf.port_b;
+	of=0;
+    end     
+    else if(aluf.opcode==ALU_ADD)//add
+    begin
+	pout=aluf.port_a+aluf.port_b;
+	nf=pout[31];
+	if ((aluf.port_a[31]==0)&&(aluf.port_b[31]==0)&&(nf==1)) begin
+	
+	of=1;
+	end
+	else if((aluf.port_a[31]==1)&&(aluf.port_b[31]==1)&&(nf==0)) begin
+	//case of adding two huge neg numbers
+	of=1;
+	end else begin
+	of=0;
+	end    
+    end     
+    else if(aluf.opcode==ALU_SUB)//sub
+    begin
+	nf=pout[31];
+	pout=aluf.port_a-aluf.port_b;
+
+	if ((aluf.port_a[31]==0)&&(aluf.port_b[31]==1)&&(nf==1)) begin
+	of=1;
+	end
+	else if((aluf.port_a[31]==1)&&(aluf.port_b[31]==0)&&(nf==0)) begin
+	of=1;
+	end else begin
+	of=0;
+	end    	//subtraction
+
+    end     
+    else if(aluf.opcode==ALU_AND)//and
+    begin
+	pout=aluf.port_a&aluf.port_b;
+	of=0;
+    end     
+    else if(aluf.opcode==ALU_OR)//or
+    begin
+	pout=aluf.port_a|aluf.port_b;
+	of=0;
+    end     
+    else if(aluf.opcode==ALU_XOR)//xor
+    begin
+	pout=aluf.port_a^aluf.port_b;
+	of=0;
+    end     
+    else if(aluf.opcode==ALU_NOR)//nor
+    begin
+	pout=~(aluf.port_a|aluf.port_b);
+	of=0;
+    end
+    else if(aluf.opcode==ALU_SLT)//slt
+    begin
+	if($signed(aluf.port_a) < $signed(aluf.port_b)) 
+	begin
+		pout=1;
+	end
+	else begin
+		pout=0;
+	end
+	of=0;
+    end
+    else if(aluf.opcode==ALU_SLTU)//sltu
+    begin
+	if(aluf.port_a < aluf.port_b)
+	begin
+		pout=1;
+	end
+	else begin
+		pout=0;
+	end
+	of=0;
+    end
+    else begin
+	pout='{default:0};
+	of=0;
+    end
+	nf=pout[31];
+//	if (pout==0) begin
+//	zf=1;
+//	end else begin
+//	zf=0;
+//	end
+
+	
+
+
+  end
+
+  assign aluf.nf=nf;
+  assign aluf.zf= (pout==0) ? 1:0; 
+  assign aluf.of=of;
+  assign aluf.pout=pout;
+//  assign aluf.zf=zf;
+
+endmodule

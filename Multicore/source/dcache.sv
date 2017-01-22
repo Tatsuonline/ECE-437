@@ -1,0 +1,606 @@
+`include "pipeline_types_pkg.vh"
+`include "cpu_types_pkg.vh"
+`include "cache_types_pkg.vh"
+
+module dcache
+  import cpu_types_pkg::*,
+  pipeline_types_pkg::*,
+  cache_types_pkg::*;
+(
+  input logic CLK, nRST,
+  datapath_cache_if.dcache dcif,
+  cache_control_if ccif
+);
+//  datapath_cache_if.cache dcif,
+//  cache_control_if.caches ccif // before lab9
+
+//  datapath_cache_if.dcache dcif,
+//  cache_control_if.dcache ccif // before worked for lab9
+
+//on miss, from update, go to writer, WEN/REN
+//
+
+dstate_t cur, next;
+   parameter CPUID = 0;
+   
+   dcache_frame_t [1:0] tags [7:0]; 
+   dcache_frame_t [1:0] tempTag; 
+   dcache_frame_t dcur;
+   dcache_frame_t dnext;
+   dcache_frame_t dwrite;
+
+   dcache_values_t [1:0] values [7:0];
+   dcache_values_t [1:0] tempValue;
+   dcache_values_t dval;
+   dcache_values_t dvalnext;
+   dcache_values_t dvalwrite;
+   
+   logic     lru [7:0]; // Least Recently Used.
+   logic     nextlru;
+
+   logic dhitcond1;
+   logic dhitcond2;
+   logic dhitcond3;
+   logic dhitcond4;
+   logic     tagWEN;   
+   logic     valueWEN;
+   logic     hit;
+   logic     way;
+   logic     wWay;
+   logic     dirtyFrame; 
+   instruction_t addr;
+   instruction_t saddr0;
+   instruction_t saddr1;
+   logic     wayCount;
+   logic nextWayCount;
+   logic [3:0] setCount;
+   logic [3:0] nextSetCount;
+   word_t hitCount;
+   word_t nextHitCount;
+   logic       flushWait;
+   logic       dataIn;
+   logic shit;
+   logic [2:0] gayflag;
+   word_t dmemAtomicAddr;
+   logic dmemAtomicFlag;
+   logic daaFlag;
+   logic atomicWflag;
+
+   assign tempTag = tags[addr.index];
+   assign dwrite = tempTag[wWay];
+   assign dvalwrite = tempValue[wWay];
+   assign dcur = tempTag[way];
+   assign dval = tempValue[way];
+   assign tempValue = values[addr.index];
+   assign dirtyFrame = dwrite.d && dwrite.v;///////////////
+   assign addr = ccif.ccwait[CPUID] ? ccif.ccsnoopaddr[CPUID]: dcif.dmemaddr; 
+   assign saddr0 = ccif.ccsnoopaddr[0];
+   assign saddr1 = ccif.ccsnoopaddr[1];
+ 
+assign dhitcond1 = ~ccif.ccwait[CPUID] & ~ccif.ccinv[CPUID];
+assign dhitcond2 =(hit & (dmemAtomicFlag & dcur.d | dcif.dmemREN));
+assign dhitcond3 = (~(dmemAtomicAddr == dcif.dmemaddr)) | ((dmemAtomicAddr == dcif.dmemaddr) && ~daaFlag);
+assign dcif.dhit = ( dhitcond2 | (dcif.datomic && dcif.dmemWEN && dhitcond3));
+
+
+
+
+always_ff @ (posedge CLK, negedge nRST) begin
+  if(~nRST) begin
+    dmemAtomicAddr <= '0;
+    daaFlag <= 0;
+  end
+  //else if (dcif.datomic && dcif.dmemREN) begin
+  else if (dcif.datomic && dcif.dmemREN & ~ccif.ccwait[CPUID]) begin
+    dmemAtomicAddr <= dcif.dmemaddr;
+    daaFlag <= 1;
+  end
+  //else if (dcif.datomic && dcif.dmemWEN) begin
+  else if (dcif.datomic && dcif.dmemWEN & ~ccif.ccwait[CPUID]) begin
+    if ((dmemAtomicAddr == dcif.dmemaddr) && daaFlag & dcur.d & ~ccif.ccinv[CPUID]) begin
+      daaFlag <= 0;
+      dmemAtomicAddr <= 0;
+    end
+  end
+  else if(~dcif.datomic & dcif.dmemWEN & ~ccif.ccwait[CPUID]) begin
+      daaFlag <= 0;
+      dmemAtomicAddr <= 0;
+  end
+  //else if (address == dmemAtomicAddr) begin
+  else if ((ccif.ccsnoopaddr[CPUID] == dmemAtomicAddr) & ccif.ccwait[CPUID]) begin
+      daaFlag <= 0;
+      dmemAtomicAddr <= 0;
+  end
+end
+
+
+assign atomicWflag = dcif.datomic && (dcif.dmemWEN && (dmemAtomicAddr==dcif.dmemaddr) && daaFlag);
+
+   always_comb begin
+      if((tempTag[0].v && (tempTag[0].tag == addr.tag))||(tempTag[1].v && (tempTag[1].tag == addr.tag))) begin
+	 hit=1;
+      end
+      else begin 
+	 hit = 0; 
+      end
+
+// DoDataWrite, dmemload
+   if(dcif.datomic) begin
+      dmemAtomicFlag=(dcif.dmemWEN && (dmemAtomicAddr==dcif.dmemaddr) && daaFlag);
+//      if(dcif.dmemWEN && daaFlag && (dmemAtomicAddr == dcif.dmemaddr)) begin // same
+      if(dcif.dmemWEN) begin
+	 dcif.dmemload=atomicWflag;
+      end
+      else begin
+         dcif.dmemload = dval.values[addr.blockOffset];
+      end
+   end else begin
+      dmemAtomicFlag=dcif.dmemWEN;
+      dcif.dmemload = dval.values[addr.blockOffset];
+   end
+      
+
+      
+   
+
+/* no need
+      if((tempTag[0].v && (tempTag[0].tag == saddr0.tag))||(tempTag[1].v && (tempTag[1].tag == saddr1.tag))) begin
+	 shit=1;
+      end
+      else begin 
+	 shit = 0; 
+      end
+*/      
+      if(tempTag[1].v) begin
+	 if (tempTag[1].tag == addr.tag) begin
+            way=1;
+	 end
+         else begin
+            way=0;
+         end
+      end
+      else begin
+	 way=0;
+      end
+end
+
+always_comb begin
+      if (hit) begin
+	 wWay = way;//
+      end
+      else begin
+	wWay = lru[addr.index];
+      end     
+end
+   
+   always_ff @(posedge CLK, negedge nRST) begin
+      if(nRST == 0) begin
+	 cur <= IDLE;
+	 setCount <= '0;
+	 wayCount <= '0;
+	 hitCount <= '0;
+	 tags[0][0] <= '0;	 //tags[0][0].d <= '0;
+	 tags[0][1] <= '0;	 //tags[0][1].d <= '0;
+	 tags[1][0] <= '0;	 //tags[1][0].d <= '0;
+	 tags[1][1] <= '0;	 //tags[1][1].d <= '0;
+	 tags[2][0] <= '0;	 //tags[2][0].d <= '0;
+	 tags[2][1] <= '0;	 //tags[2][1].d <= '0;
+	 tags[3][0] <= '0;	 //tags[3][0].d <= '0;
+	 tags[3][1] <= '0;	 //tags[3][1].d <= '0;
+	 tags[4][0] <= '0;	 //tags[4][0].d <= '0;
+	 tags[4][1] <= '0;	 //tags[4][1].d <= '0;
+	 tags[5][0] <= '0;	 //tags[5][0].d <= '0;
+	 tags[5][1] <= '0;	 //tags[5][1].d <= '0;
+	 tags[6][0] <= '0;	 //tags[6][0].d <= '0;
+	 tags[6][1] <= '0;	 //tags[6][1].d <= '0;
+	 tags[7][0] <= '0;	 //tags[7][0].d <= '0;
+	 tags[7][1] <= '0;	 //tags[7][1].d <= '0;	 
+         lru[0] <= '0;
+         lru[1] <= '0;
+         lru[2] <= '0;
+         lru[3] <= '0;
+         lru[4] <= '0;
+         lru[5] <= '0;
+         lru[6] <= '0;
+         lru[7] <= '0;
+      end
+      else begin
+	 if(valueWEN) begin
+	    values[addr.index][wWay] <= dvalnext;
+	 end
+	 if(tagWEN) begin
+	    tags[addr.index][wWay] <= dnext;
+	 end
+
+	 cur <= next;
+	 hitCount <= nextHitCount;
+	 setCount <= nextSetCount;
+	 lru[addr.index] <= nextlru;
+	 wayCount <= nextWayCount;
+      end
+   end
+
+//   always_comb begin
+   always @ (*) begin
+      casez(cur)
+	IDLE: begin
+	   if (ccif.ccwait[CPUID] && hit && ccif.ccinv[CPUID]) begin
+		 next = INVALIDATE;
+	   end
+	   else if (ccif.ccwait[CPUID] && hit && !ccif.ccinv[CPUID]) begin
+//	   else if (ccif.ccwait[CPUID] && shit && !ccif.ccinv[CPUID]) begin
+		 next = RESP_SNOOP1; 
+	   end
+	   else if (!ccif.ccwait[CPUID] && (dmemAtomicFlag || dcif.dmemREN) && dirtyFrame & !hit) begin//
+		 next = WRITE_BACK1;//////////////
+	   end
+	   else if (!ccif.ccwait[CPUID] && dcif.dmemREN && !hit && !dirtyFrame) begin
+		 next = UPDATE1;
+	   end
+	   else if (!ccif.ccwait[CPUID] && dmemAtomicFlag && !hit & !dirtyFrame) begin
+		 next = WRITER;
+	   end
+	   else if (dcif.halt) begin //coher1, coher2->no halt
+	        next = FLUSH_STATE1;
+           end
+	   else begin
+              next = IDLE;
+	   end
+	end
+	WRITE_BACK1: begin
+	   if(ccif.dwait[CPUID]) begin
+              next = WRITE_BACK1;
+	   end
+	   else begin
+              next = WRITE_BACK2;
+	   end
+	end
+	WRITE_BACK2: begin
+	   if(ccif.dwait[CPUID]) begin
+              next = WRITE_BACK2;
+	   end
+	   else begin
+              if(dmemAtomicFlag) begin
+		 next = WRITER;
+              end
+              else begin
+		 next = UPDATE1;
+              end
+	   end
+	end
+	UPDATE1: begin
+	   if(hit && ccif.ccwait[CPUID] && !ccif.ccinv[CPUID]) begin
+		 next = RESP_SNOOP1;
+           end
+	   else if (!hit && ccif.ccwait[CPUID] && !ccif.ccinv[CPUID]) begin
+		 next = IDLE;	   
+	   end
+	   else if(ccif.dwait[CPUID]) begin
+              next = UPDATE1;
+	   end
+	   else begin
+              next = UPDATE2;
+	   end
+	end
+	UPDATE2: begin
+	   if(hit && ccif.ccwait[CPUID] && !ccif.ccinv[CPUID]) begin
+	         next = RESP_SNOOP1;
+	   end
+	   else if (!hit && ccif.ccwait[CPUID] && !ccif.ccinv[CPUID]) begin
+		 next = IDLE;	   
+	   end
+	   else if(ccif.dwait[CPUID]) begin
+              next = UPDATE2;
+	   end
+	   else begin
+              next = IDLE;
+	   end
+	end
+	WRITER: begin
+	   if (hit && ccif.ccwait[CPUID] && ccif.ccinv[CPUID]) begin
+		 next = INVALIDATE;
+           end
+	   else if(!hit && ccif.ccwait[CPUID] && ccif.ccinv[CPUID]) begin
+		 next = IDLE;	   
+	   end
+	   else if(ccif.ccwait[CPUID] && !ccif.ccinv[CPUID] & hit) begin
+//	   else if(ccif.ccwait[CPUID] && !ccif.ccinv[CPUID] & shit) begin
+              next = RESP_SNOOP1;
+	   end
+	   else if(ccif.dwait[CPUID]) begin
+              next = WRITER;
+	   end
+	   else begin
+              next = IDLE;
+	   end
+	end
+	FLUSH_STATE1: begin
+	   if(hit && ccif.ccwait[CPUID] && ccif.ccinv[CPUID]) begin
+		 next = INVALIDATE;
+	   end
+	   else if(!hit && ccif.ccwait[CPUID] && ccif.ccinv[CPUID]) begin
+		 next = IDLE;
+	   end
+	   else if(ccif.ccwait[CPUID] && !ccif.ccinv[CPUID] && hit) begin
+              next = RESP_SNOOP1;
+	   end
+	   else if(setCount >= 8) begin
+              next = END_OF_FLUSH;
+	   end
+	   else if(!flushWait) begin
+              next = FLUSH_STATE2;
+	   end
+	   else begin
+              next = FLUSH_STATE1;
+	   end
+	end
+	FLUSH_STATE2: begin
+	   if (hit && ccif.ccwait[CPUID] && ccif.ccinv[CPUID]) begin
+		 next = INVALIDATE;
+	   end
+	   else if(!hit && ccif.ccwait[CPUID] && ccif.ccinv[CPUID]) begin
+		 next = IDLE;
+	   end
+	   else if(ccif.ccwait[CPUID] && !ccif.ccinv[CPUID] && hit) begin
+              next = RESP_SNOOP1;
+	   end
+	   else if(!flushWait) begin
+              next = FLUSH_STATE1;
+	   end
+	   else begin
+              next = FLUSH_STATE2;
+	   end
+	end
+	END_COUNT: begin
+	   if(!ccif.dwait[CPUID]) begin
+              next = END_OF_FLUSH;
+	   end
+	   else begin
+              next = END_COUNT;
+	   end
+	end
+	END_OF_FLUSH: begin
+	   next = END_OF_FLUSH;
+	end
+	RESP_SNOOP1: begin
+	   if (!ccif.dwait[CPUID]) begin
+              next = RESP_SNOOP2;
+	   end
+	   else begin
+              next = RESP_SNOOP1;
+	   end 
+	end
+	RESP_SNOOP2: begin
+	   if (!ccif.dwait[CPUID]) begin
+              next = IDLE;
+	   end
+	   else begin
+              next = RESP_SNOOP2;
+	   end
+	end
+	INVALIDATE: begin
+	   if (!ccif.dwait[CPUID] || !dcur.d) begin
+              next = IDLE;
+	   end
+	   else begin
+              next = INVALIDATE;
+	   end
+	end
+	default : next = IDLE;
+      endcase
+   end
+
+//   always_comb 
+   always @ (*) 
+   begin
+
+     // nextHitCount = hitCount; 
+      nextWayCount = wayCount;
+      nextSetCount = setCount;
+      dnext.v = 0;
+      dnext.d = 0;
+
+      nextlru = lru[addr.index];
+      ccif.dstore[CPUID] = word_t'('0);
+      dcif.flushed = 0;
+
+      dvalnext.values[0] = '0;
+      dvalnext.values[1] = '0;
+      dnext.tag = addr.tag;
+      tagWEN = 0; 
+      valueWEN = 0;
+      flushWait = 1;
+
+      casez(cur)
+	IDLE: begin
+	   ccif.ccwrite[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 0;
+           //ccif.daddr = word_t'('0);
+	   ccif.daddr[CPUID] = dcif.dmemaddr;
+	   ccif.dREN[CPUID] = 0;
+	   ccif.dWEN[CPUID] = 0;
+	   if(dmemAtomicFlag && hit && !ccif.ccwait[CPUID]) begin
+	      if (addr.blockOffset) begin
+		 dvalnext.values[0] = dval.values[0];
+		 dvalnext.values[1] = dcif.dmemstore;
+              end
+//	      else if (!addr.blockOffset) begin
+	      else begin
+		dvalnext.values[0] = dcif.dmemstore;
+		dvalnext.values[1] = dval.values[1];
+	      end
+              tagWEN = 1;
+              valueWEN = 1;
+              dnext.v = 1;
+	      dnext.d = 1;
+	      ccif.ccwrite[CPUID] = !dcur.d;
+	      ccif.cctrans[CPUID] = !dcur.d;
+	   end
+	   if(hit && (dcif.dmemREN | dmemAtomicFlag)) begin
+              //nextHitCount = hitCount + 1;
+              nextlru = !wWay;
+	   end
+	end
+	WRITE_BACK1: begin
+	   ccif.daddr[CPUID] = word_t'({dwrite.tag, addr.index, 3'b000});
+	   ccif.dstore[CPUID] = dvalwrite.values[0];
+	   ccif.dREN[CPUID] = 0;
+	   ccif.dWEN[CPUID] = 1;
+	   ccif.ccwrite[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 0;
+	end
+	WRITE_BACK2: begin
+	   ccif.daddr[CPUID] = word_t'({dwrite.tag, addr.index, 3'b100});
+	   ccif.dstore[CPUID] = dvalwrite.values[1];
+	   ccif.dREN[CPUID] = 0;
+	   ccif.dWEN[CPUID] = 1;
+	   ccif.ccwrite[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 0;
+	end
+	UPDATE1: begin
+	   /*if(!ccif.dwait) begin
+              nextHitCount = hitCount - 1;
+	   end*/
+	   ccif.daddr[CPUID] = word_t'({addr.tag, addr.index, 3'b000});
+	   dvalnext.values[0] = ccif.dload[CPUID];
+	   valueWEN = !ccif.ccwait[CPUID];
+   	   ccif.dREN[CPUID] = 1;
+	   ccif.dWEN[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 1;
+	   ccif.ccwrite[CPUID] = 0;
+	end
+	UPDATE2: begin
+	   ccif.daddr[CPUID] = word_t'({addr.tag, addr.index, 3'b100});
+	   dvalnext.values[0] = dvalwrite.values[0];
+	   dvalnext.values[1] = ccif.dload[CPUID];
+	   dnext.v = !ccif.dwait[CPUID];
+	   dnext.d = 0;
+	   tagWEN = !ccif.ccwait[CPUID];
+	   valueWEN = !ccif.ccwait[CPUID];
+   	   ccif.dREN[CPUID] = 1;
+	   ccif.dWEN[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 1;
+	   ccif.ccwrite[CPUID] = 0;
+	end
+	WRITER: begin
+	   /*if(!ccif.dwait[CPUID]) begin
+              nextHitCount = hitCount - 1;
+	   end*/
+	   ccif.daddr[CPUID] = word_t'({addr.tag, addr.index, !addr.blockOffset, 2'b00});
+	   dnext.v = !ccif.dwait[CPUID];
+	   tagWEN = !ccif.ccwait[CPUID];
+	   valueWEN = !ccif.ccwait[CPUID];
+	   if (addr.blockOffset) begin
+	      dvalnext.values[0] = ccif.dload[CPUID];
+	      dvalnext.values[1] = dcif.dmemstore;
+	   end
+	   else if (!addr.blockOffset) begin
+	      dvalnext.values[0] = dcif.dmemstore;
+	      dvalnext.values[1] = ccif.dload[CPUID];
+	     end
+   	   ccif.dREN[CPUID] = 1;
+	   ccif.dWEN[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 1;
+	   ccif.ccwrite[CPUID] = 1;
+	end
+	FLUSH_STATE1: begin
+	   ccif.dREN[CPUID] = 0;
+	   ccif.ccwrite[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 0;
+	   if(tags[setCount][wayCount].d) begin
+              flushWait = ccif.dwait[CPUID];
+              ccif.dWEN[CPUID] = 1;
+              ccif.daddr[CPUID] = {tags[setCount][wayCount].tag, setCount[2:0], 3'b000};
+              ccif.dstore[CPUID] = values[setCount][wayCount].values[0];
+	   end
+	   else begin
+              ccif.dWEN[CPUID] = 0;
+              flushWait = 0;
+              ccif.daddr[CPUID] = word_t'('0);
+	   end
+	end
+	FLUSH_STATE2: begin
+	   ccif.dREN[CPUID] = 0;
+	   ccif.ccwrite[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 0;
+	   if(tags[setCount][wayCount].d) begin
+              flushWait = ccif.dwait[CPUID];
+              ccif.dWEN[CPUID] = 1;
+              ccif.daddr[CPUID] = {tags[setCount][wayCount].tag, setCount[2:0], 3'b100};
+              ccif.dstore[CPUID] = values[setCount][wayCount].values[1];
+              if(!ccif.dwait[CPUID]) begin
+		 nextSetCount = wayCount ? setCount + 1'b1 : setCount;
+		 nextWayCount = !wayCount;
+              end
+	   end
+	   else begin
+              ccif.dWEN[CPUID] = 0;
+              flushWait = 0;
+              ccif.daddr[CPUID] = word_t'('0);
+	      if (wayCount) begin
+		 nextSetCount = setCount + 1'b1;
+	      end else begin
+		 nextSetCount = setCount;
+	      end
+              // nextSetCount = wayCount ? setCount + 1'b1 : setCount;
+              nextWayCount = !wayCount;
+	   end
+	end
+	END_COUNT: begin
+	   ccif.dREN[CPUID] = 0;
+	   ccif.dWEN[CPUID] = 1;
+	   ccif.daddr[CPUID] = 32'h3100;
+	   ccif.dstore[CPUID] = hitCount;
+	end
+	END_OF_FLUSH: begin
+	   ccif.dREN[CPUID] = 0;
+	   ccif.dWEN[CPUID] = 0;
+	   ccif.daddr[CPUID] = word_t'('0);
+	   dcif.flushed = 1;
+	   ccif.ccwrite[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 0;
+	end
+	RESP_SNOOP1: begin
+	      dnext.d = 0;
+	      dnext.v = 1;
+	      tagWEN = 1;
+	      ccif.cctrans[CPUID] = 1;
+	      ccif.ccwrite[CPUID] = 0;
+	      ccif.dstore[CPUID] = dval.values[0];
+	      ccif.dREN[CPUID] = 0;
+	      ccif.dWEN[CPUID] = 1;
+	      ccif.daddr[CPUID] = word_t'({addr.tag, addr.index, 3'b000});  
+	end
+	RESP_SNOOP2: begin
+	   dnext.d = 0;
+	   dnext.v = 1;
+	   tagWEN = 1;
+	   ccif.cctrans[CPUID] = 1;
+	   ccif.ccwrite[CPUID] = 0;
+	   ccif.dstore[CPUID] = dval.values[1];
+	   ccif.dREN[CPUID] = 0;
+	   ccif.dWEN[CPUID] = 1;
+	   ccif.daddr[CPUID] = word_t'({addr.tag, addr.index, 3'b100});
+	end   
+	INVALIDATE: begin
+	   ccif.cctrans[CPUID] = 1;
+	   ccif.ccwrite[CPUID] = dcur.d;
+	   ccif.dstore[CPUID] = dval.values[addr.blockOffset];
+	   ccif.daddr[CPUID] = addr;
+	   ccif.dREN[CPUID] = 0;
+	   ccif.dWEN[CPUID] = dcur.d;
+	   dnext.d = 0;
+	   dnext.v = 0;
+	   tagWEN = (!ccif.dwait[CPUID] || !dcur.d);
+	end
+	default: begin
+	   ccif.dREN[CPUID] = 0;
+	   ccif.dWEN[CPUID] = 0;
+	   ccif.daddr[CPUID] = word_t'('0);
+	   ccif.ccwrite[CPUID] = 0;
+	   ccif.cctrans[CPUID] = 0;
+	end
+      endcase
+   end
+
+endmodule

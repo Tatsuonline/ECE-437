@@ -1,0 +1,455 @@
+`include "cache_control_if.vh"
+`include "cpu_types_pkg.vh"
+
+module memory_control
+(
+   input CLK, nRST,
+   cache_control_if.cc ccif
+);
+import cpu_types_pkg::*;
+
+typedef enum bit [2:0]
+{
+   Idle, Snoop_Dogg, Fetch_From1, Fetch_From2, Cache_Transfer1, Cache_Transfer2, Instructions, Writeback, Invalidate
+} state_t;
+
+state_t cur, next;
+
+always_ff @ (posedge CLK, negedge nRST)
+begin
+   if(!nRST) begin
+      cur <= Idle;
+   end else begin
+      cur <= next;
+   end
+end
+
+always_comb begin
+   casez(cur)
+      Idle: begin
+         if(ccif.cctrans[0]||ccif.cctrans[1]) begin
+            next <= Dogg_Request;
+         end
+	 else if((ccif.iREN[0] && !ccif.cctrans) || (ccif.iREN[1] && !ccif.cctrans)) begin
+	    next <= Instructions;
+	 end
+	 else begin
+	    next <= Idle;
+	 end
+      end // case: Idle
+     Dogg_Request: begin
+         if((ccif.cctrans[1] && ccif.ccwrite[1]) || (ccif.cctrans[0] && ccif.ccwrite[0]))  begin
+            next <= Snoop_Dogg;
+         end
+	 else if((!ccif.cctrans[1] && ccif.dWEN[1]) || (!ccif.cctrans[0] && ccif.dWEN[0])) begin
+	    next <= Snoop_Dogg;
+	 end
+	 else if((!ccif.cctrans[1] && !ccif.ccwrite[1]) || (!ccif.cctrans[0] && !ccif.ccwrite[0])) begin
+	    next <= Fetch_From;
+	 end
+	 else begin
+	    next <= Dogg_Request;
+	 end
+     end
+      Snoop_Dogg: begin
+         if((ccif.cctrans[1] && ccif.ccwrite[1]) || (ccif.cctrans[0] && ccif.ccwrite[0]))  begin
+            next <= Cache_Transfer;
+         end
+	 else if((!ccif.cctrans[1] && ccif.dWEN[1]) || (!ccif.cctrans[0] && ccif.dWEN[0])) begin
+	    next <= Writeback;
+	 end
+	 else if((!ccif.cctrans[1] && !ccif.ccwrite[1]) || (!ccif.cctrans[0] && !ccif.ccwrite[0])) begin
+	    next <= Fetch_From;
+	 end
+	 else begin
+	    next <= Snoop_Dogg;
+	 end
+     end
+     Fetch_From1: begin
+	if(!ccif.dREN[1]) begin
+	   next <= Fetch_From2;
+	end
+	else begin
+	   next <= Fetch_From1;
+	end
+     end
+     Fetch_From2: begin
+	if(!ccif.dREN[0]) begin
+	   next <= Idle;
+	end
+	else begin
+	   next <= Fetch_From2;
+	end
+     end
+     Cache_Transfer1: begin
+	if(!ccif.dWEN[0]) begin
+   	   next <= Cache_Transfer2;
+	end
+	else begin
+	   next <= Cache_Transfer1;
+	end
+     end
+     Cache_Transfer2: begin
+	if(!ccif.dWEN[1]) begin
+   	   next <= Idle;
+	end
+	else if ((ccif.cctrans[0] && ccif.ccwrite[0]) || (ccif.cctrans[1] && ccif.ccwrite[1])) begin
+	   next <= Invalidate;
+	end	
+	else begin
+	   next <= Cache_Transfer2;
+	 end
+      end
+      Writeback: begin
+	 if((!ccif.dWEN[0] || !ccif.dWEN[1])) begin
+   	    next <= Idle;
+	 end
+	 else begin
+	    next <= Writeback;
+	 end
+      end
+      Instructions: begin
+         if((!ccif.cctrans[0] && !ccif.iREN[0]) || (!ccif.cctrans[1] && !ccif.iREN[1])) begin
+	    next <= Idle;
+ 	 end
+ 	 else begin
+ 	    next <= Instructions;
+	 end
+     end
+     Invalidate: begin
+	    next <= Idle;
+     end
+   default: begin
+      next = Idle;
+   end
+
+   endcase
+end
+
+always_comb begin //ffffuuuucccckkkkk
+   casez(cur)
+      Idle: begin
+	ccif.iwait[0]=1;  ccif.iwait[1]=1;
+	ccif.iload[0]=0;  ccif.iload[1]=0;
+	ccif.ccwait[0]=0; ccif.ccwait[1]=0;
+	ccif.dwait[0]=1;  ccif.dwait[1]=1;
+	ccif.dload[0]=0;  ccif.dload[1]=0;
+	ccif.ccinv[0]=0;  ccif.ccinv[1]=0;
+
+	ccif.ccsnoopaddr[0]=0;
+	ccif.ccsnoopaddr[1]=0;
+
+        ccif.ramstore=0;
+	ccif.ramaddr=0;
+	ccif.ramWEN=0;
+
+	ccif.ramREN=0;
+      end
+///////////////////
+      Dogg_Request: begin
+	if (ccif.cctrans[0] == 1) begin
+	   ccif.iwait[0]=1;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0]=1;  
+	   ccif.dload[0]=0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1]=0;  
+	   ccif.dload[1]=0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+           ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore=0;
+	   ccif.ramaddr=0;
+	   ccif.ramWEN=0;
+	   ccif.ramREN=0;
+
+	end else if (ccif.cctrans[1] == 1) begin
+	   ccif.iwait[1]=1;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1]=1;  
+	   ccif.dload[1]=0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0]=0;  
+	   ccif.dload[0]=0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+	   ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore=0;
+	   ccif.ramaddr=0;
+	   ccif.ramWEN=0;
+	   ccif.ramREN=0;
+	end
+//////////////////
+      Snoop_Dogg: begin
+	if (ccif.cctrans[0] == 1) begin
+	   ccif.iwait[0]=1;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0]=1;  
+	   ccif.dload[0]=0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1]=0;  
+	   ccif.dload[1]=0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+           ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore=0;
+	   ccif.ramaddr=0;
+	   ccif.ramWEN=0;
+	   ccif.ramREN=0;
+
+	end else if (ccif.cctrans[1] == 1) begin
+	   ccif.iwait[1]=1;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1]=1;  
+	   ccif.dload[1]=0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0]=0;  
+	   ccif.dload[0]=0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+	   ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore=0;
+	   ccif.ramaddr=0;
+	   ccif.ramWEN=0;
+	   ccif.ramREN=0;
+	end	  
+      end
+      Fetch_From1: begin
+	if (!ccif.ccwrite[1] && !ccif.cctrans[1]) begin
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1] = !(ccif.ramstate == ACCESS);  
+	   ccif.dload[1] = ccif.ramload;  
+	   ccif.ccinv[1]=0;  
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0]=0;  
+	   ccif.dload[0]=0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+	   ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore=0;
+	   ccif.ramaddr = ccif.daddr[1];
+	   ccif.ramWEN=0;
+	   ccif.ramREN=0;
+	end else if (!ccif.ccwrite[0] && !ccif.cctrans[0]) begin
+	   ccif.iwait[0]=1;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0] = !(ccif.ramstate == ACCESS);  
+	   ccif.dload[0] = ccif.ramload;
+	   ccif.ccinv[0]=0;  
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1]=0;  
+	   ccif.dload[1]=0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+	   ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore = 0;
+	   ccif.ramaddr = ccif.daddr[0];
+	   ccif.ramWEN = 0;
+	   ccif.ramREN = 0;
+	end	  
+      end
+      Fetch_From2: begin
+	if (!ccif.ccwrite[1] && !ccif.cctrans[1]) begin
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1] = !(ccif.ramstate == ACCESS);  
+	   ccif.dload[1] = ccif.ramload;  
+	   ccif.ccinv[1]=0;  
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0]=0;  
+	   ccif.dload[0]=0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+	   ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore=0;
+	   ccif.ramaddr = ccif.daddr[1];
+	   ccif.ramWEN=0;
+	   ccif.ramREN=0;
+	end else if (!ccif.ccwrite[0] && !ccif.cctrans[0]) begin
+	   ccif.iwait[0]=1;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0] = !(ccif.ramstate == ACCESS);  
+	   ccif.dload[0] = ccif.ramload;
+	   ccif.ccinv[0]=0;  
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1]=0;  
+	   ccif.dload[1]=0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+	   ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore = 0;
+	   ccif.ramaddr = ccif.daddr[0];
+	   ccif.ramWEN = 0;
+	   ccif.ramREN = 0;
+	end	  
+      end
+    /*  Writeback: begin
+	if (ccif.dWEN[1] && !ccif.cctrans[1]) begin
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1] = !(ccif.ramstate == ACCESS);  
+	   ccif.dload[1] = 0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0]=0;  
+	   ccif.dload[0]=0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+	   ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore = ccif.dstore[1];
+	   ccif.ramaddr = ccif.daddr[1];
+	   ccif.ramWEN = 1;
+	   ccif.ramREN=0;
+	end else if (ccif.dWEN[0] && !ccif.cctrans[0]) begin
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0] = !(ccif.ramstate == ACCESS);  
+	   ccif.dload[0] = 0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1]=0;  
+	   ccif.dload[1]=0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+	   ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore = ccif.dstore[0];
+	   ccif.ramaddr = ccif.daddr[0];
+	   ccif.ramWEN = 1;
+	   ccif.ramREN=0;
+	end 
+      end*/
+      Instructions: begin // <------------------------------------------------ Does Instr_0 go to Idle??W?W?WWDHbncvso
+        if (ccif.dWEN[1] && !ccif.cctrans[1]) begin
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1] = !(ccif.ramstate == ACCESS);  
+	   ccif.dload[1] = 0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0]=0;  
+	   ccif.dload[0]=0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.ccsnoopaddr[1]=0;
+	   ccif.ccsnoopaddr[0]=0;
+
+           ccif.ramstore = ccif.dstore[1];
+	   ccif.ramaddr = ccif.daddr[1];
+	   ccif.ramWEN = 1;
+	   ccif.ramREN=0;
+	end else if (ccif.dWEN[0] && !ccif.cctrans[0]) begin
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0] = !(ccif.ramstate == ACCESS);  
+	   ccif.dload[0] = 0;  
+	   ccif.ccinv[0]=0;  
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1]=0;  
+	   ccif.dload[1]=0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.ccsnoopaddr[0]=0;
+	   ccif.ccsnoopaddr[1]=0;
+
+           ccif.ramstore = ccif.dstore[0];
+	   ccif.ramaddr = ccif.daddr[0];
+	   ccif.ramWEN = 1;
+	   ccif.ramREN=0;
+	end
+     end
+     Invalidate: begin
+	if (ccif.ccwrite[1] && ccif.cctrans[1]) begin
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=1; 
+	   ccif.dwait[0] = 0;  
+	   ccif.dload[0] = 0;  
+	   ccif.ccinv[0]=1;  
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=0; 
+	   ccif.dwait[1]=0;  
+	   ccif.dload[1]=0;  
+	   ccif.ccinv[1]=0;  
+	   ccif.ccsnoopaddr[0] = ccif.daddr[1];
+	   ccif.ccsnoopaddr[1] = 0;
+
+           ccif.ramstore = 0;
+	   ccif.ramaddr = 0;
+	   ccif.ramWEN = 0;
+	   ccif.ramREN=0;
+	end 
+	else if (ccif.ccwrite[0] && ccif.cctrans[0]) begin
+	   ccif.iwait[1]=0;  
+	   ccif.iload[1]=0;  
+	   ccif.ccwait[1]=1; 
+	   ccif.dwait[1] = 0;  
+	   ccif.dload[1] = 0;  
+	   ccif.ccinv[1]=1;
+	   ccif.iwait[0]=0;  
+	   ccif.iload[0]=0;  
+	   ccif.ccwait[0]=0; 
+	   ccif.dwait[0] = 0;  
+	   ccif.dload[0] = 0;  
+	   ccif.ccinv[0]=0;  
+
+	   ccif.ccsnoopaddr[1] = ccif.daddr[0];
+	   ccif.ccsnoopaddr[0] = 0;
+           ccif.ramstore = 0;
+	   ccif.ramaddr = 0;
+	   ccif.ramWEN = 0;
+	   ccif.ramREN=0;
+	end
+     end   
+   endcase
+end
+endmodule

@@ -1,0 +1,131 @@
+`include "cache_control_if.vh"
+`include "cpu_types_pkg.vh"
+
+module coherence_controller
+(
+   input CLK, nRST,
+   chache_control_if.cc ccif
+);
+import cpu_types_pkg::*;
+
+typedef enum bit [2:0]
+{
+   Idle, Snoop, FetchFrom, Update, Instr, Writeback
+} state_t;
+
+state cur, next;
+
+always_ff @ (posedge CLK, negedge nRST)
+begin
+   if(!nRST) begin
+      cur <= Idle;
+   end else begin
+      cur <= next;
+   end
+end
+
+always_comb begin
+   casez(cur)
+      Idle: begin
+         if(ccif.cctrans[0]||ccif.cctrans[1]) begin
+            next <= Snoop;
+         end
+	 else if(ccif.iREN[0]||ccif.iREN[1]) begin
+	    next <= Instr;
+	 end
+	 else begin
+	    next <= Idle;
+	 end
+      end
+      Snoop: begin
+         if((ccif.cctrans[1] && ccif.write[1]) || (ccif.cctrans[0] && ccif.write[0]))  begin
+            next <= Update;
+         end
+	 else if((ccif.cctrans[1] && !ccif.write[1]) || (ccif.cctrans[0] && !ccif.write[0])) begin
+	    next <= Writeback;
+	 end
+	 else if((!ccif.cctrans[1] && !ccif.write[1]) || (!ccif.cctrans[0] && !ccif.write[0])) begin
+	    next <= FetchFrom;
+	 end
+	 else begin
+	    next <= Snoop;
+	 end
+      end
+      FetchFrom: begin
+	 if(!ccif.dREN[1]||!ccif.dREN[0]) begin
+   	    next <= Idle;
+	 end
+	 else begin
+	    next <= FetchFrom;
+	 end
+      end
+      Update: begin
+/*
+	 if((ccif.ccwrite[0]||ccif.ccwrite[1]) begin
+   	    next <= Idle;
+	 end
+	 else begin
+	    next <= Update;
+	 end
+*/
+	 next<=Idle;
+      end
+      Writeback: begin
+	 if((!ccif.dWEN[0]||!ccif.dWEN[1]) begin
+   	    next <= Idle;
+	 end
+	 else begin
+	    next <= Writeback;
+	 end
+      end
+      Instr: begin
+         if(!ccif.iREN[0]||!ccif.iREN[1]) begin
+	    next <= Idle;
+ 	 end
+ 	 else begin
+ 	    next <= Instr;
+	 end
+      end
+   default: begin
+      next = Idle;
+   end
+   endcase
+end
+
+always_comb begin //taskkkkk
+   casez(cur)
+      Idle: begin
+	iwait[0]=1;  iwait[1]=1;
+	iload[0]=0;  iload[1]=0;
+	ccwait[0]=0; ccwait[1]=0;
+	dwait[0]=1;  dwait[1]=1;
+	dload[0]=0;  dload[1]=0;
+	ccinv[0]=0;  ccinv[1]=0;
+
+	ccsnoopaddr[0]=0;
+	ccsnoopaddr[1]=0;
+
+        ccif.ramstore=0;
+	ccif.ramaddr=0;
+	ccif.ramWEN=0;
+	ccif.ramREN=0;
+      end
+      Snoop: begin
+	iwait[0]=1;  iwait[1]=1;
+	iload[0]=0;  iload[1]=0;
+	ccwait[0]=0; ccwait[1]=0;
+	dwait[0]=1;  dwait[1]=1;
+	dload[0]=0;  dload[1]=0;
+	ccinv[0]=0;  ccinv[1]=0;
+
+	ccsnoopaddr[0]=0;
+	ccsnoopaddr[1]=0;
+
+        ccif.ramstore=0;
+	ccif.ramaddr=0;
+	ccif.ramWEN=0;
+	ccif.ramREN=0;
+      end
+
+   endcase
+end

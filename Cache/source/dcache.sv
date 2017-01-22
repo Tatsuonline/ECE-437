@@ -1,0 +1,390 @@
+`include "pipeline_types_pkg.vh"
+`include "cpu_types_pkg.vh"
+`include "cache_types_pkg.vh"
+
+module dcache
+  import cpu_types_pkg::*,
+  pipeline_types_pkg::*,
+  cache_types_pkg::*;
+(
+  input logic CLK, nRST,
+  datapath_cache_if.dcache dcif,
+  cache_control_if.dcache ccif
+);
+//  datapath_cache_if.cache dcif,
+//  cache_control_if.caches ccif
+
+dstate_t cur, next;
+
+   dcache_frame_t [1:0] tags [7:0]; 
+   dcache_frame_t [1:0] tempTag; 
+   dcache_frame_t dcur;
+   dcache_frame_t dnext;
+   dcache_frame_t dwrite;
+
+   dcache_values_t [1:0] values [7:0];
+   dcache_values_t [1:0] tempValue;
+   dcache_values_t dval;
+   dcache_values_t dvalnext;
+   dcache_values_t dvalwrite;
+   
+   logic     lru [7:0]; // Least Recently Used.
+   logic     nextlru;
+   
+   logic     tagWEN;   
+   logic     valueWEN;
+   logic     hit;
+   logic     way;
+   logic     wWay;
+   logic     dirtyFrame; 
+   instruction_t addr;
+   logic     wayCount;
+   logic nextWayCount;
+   logic [3:0] setCount;
+   logic [3:0] nextSetCount;
+   word_t hitCount;
+   word_t nextHitCount;
+   logic       flushWait;
+
+
+   assign dcif.dmemload = dval.values[addr.blockOffset];////
+   assign dcif.dhit = (hit == 1) && (dcif.dmemREN | dcif.dmemWEN);////
+   assign dwrite = tempTag[wWay];
+   assign dvalwrite = tempValue[wWay];
+   assign dcur = tempTag[way];
+   assign dval = tempValue[way];
+   assign tempTag = tags[addr.index];
+   assign tempValue = values[addr.index];
+   assign dirtyFrame = dwrite.d && dwrite.v;///////////////
+   assign addr = dcif.dmemaddr; ////////////////
+
+   always_comb begin
+      if((tempTag[0].v && (tempTag[0].tag == addr.tag))||(tempTag[1].v && (tempTag[1].tag == addr.tag))) begin
+	 hit=1;
+      end
+      else begin 
+	 hit = 0; 
+      end
+
+      if(tempTag[1].v) begin
+	 if (tempTag[1].tag == addr.tag) begin
+            way=1;
+	 end
+         else begin
+            way=0;
+         end
+      end
+      else begin
+	 way=0;
+      end
+
+      if (hit) begin
+	 wWay = way;//
+      end
+      else begin
+	wWay = lru[addr.index];
+      end
+      
+   end
+   
+   always_ff @(posedge CLK, negedge nRST) begin
+      if(nRST == 0) begin
+	 cur <= IDLE;
+	 setCount <= '0;
+	 wayCount <= '0;
+	 hitCount <= '0;
+	 tags[0][0] <= '0;	 //tags[0][0].d <= '0;
+	 tags[0][1] <= '0;	 //tags[0][1].d <= '0;
+	 tags[1][0] <= '0;	 //tags[1][0].d <= '0;
+	 tags[1][1] <= '0;	 //tags[1][1].d <= '0;
+	 tags[2][0] <= '0;	 //tags[2][0].d <= '0;
+	 tags[2][1] <= '0;	 //tags[2][1].d <= '0;
+	 tags[3][0] <= '0;	 //tags[3][0].d <= '0;
+	 tags[3][1] <= '0;	 //tags[3][1].d <= '0;
+	 tags[4][0] <= '0;	 //tags[4][0].d <= '0;
+	 tags[4][1] <= '0;	 //tags[4][1].d <= '0;
+	 tags[5][0] <= '0;	 //tags[5][0].d <= '0;
+	 tags[5][1] <= '0;	 //tags[5][1].d <= '0;
+	 tags[6][0] <= '0;	 //tags[6][0].d <= '0;
+	 tags[6][1] <= '0;	 //tags[6][1].d <= '0;
+	 tags[7][0] <= '0;	 //tags[7][0].d <= '0;
+	 tags[7][1] <= '0;	 //tags[7][1].d <= '0;	 
+         lru[0] <= '0;
+         lru[1] <= '0;
+         lru[2] <= '0;
+         lru[3] <= '0;
+         lru[4] <= '0;
+         lru[5] <= '0;
+         lru[6] <= '0;
+         lru[7] <= '0;
+      end
+      else begin
+	 if(valueWEN) begin
+	    values[addr.index][wWay] <= dvalnext;
+	 end
+	 if(tagWEN) begin
+	    tags[addr.index][wWay] <= dnext;
+	 end
+
+	 cur <= next;
+	 hitCount <= nextHitCount;
+	 setCount <= nextSetCount;
+	 lru[addr.index] <= nextlru;
+	 wayCount <= nextWayCount;
+      end
+   end
+
+   always_comb begin
+      casez(cur)
+	IDLE: begin
+	   if((dcif.dmemWEN | dcif.dmemREN) & dirtyFrame & !hit) begin
+              next = WRITE_BACK1;
+	   end
+	   else if(dcif.dmemREN & !hit & !dirtyFrame) begin
+              next = UPDATE1;
+	   end
+	   else if(dcif.dmemWEN & !hit & !dirtyFrame) begin
+              next = WRITER;
+	   end
+	   else if(dcif.halt) begin
+              next = FLUSH_STATE1;
+	   end
+	   else begin
+              next = IDLE;
+	   end
+	end
+	WRITE_BACK1: begin
+	   if(ccif.dwait) begin
+              next = WRITE_BACK1;
+	   end
+	   else begin
+              next = WRITE_BACK2;
+	   end
+	end
+	WRITE_BACK2: begin
+	   if(ccif.dwait) begin
+              next = WRITE_BACK2;
+	   end
+	   else begin
+              if(dcif.dmemWEN) begin
+		 next = WRITER;
+              end
+              else begin
+		 next = UPDATE1;
+              end
+	   end
+	end
+	UPDATE1: begin
+	   if(ccif.dwait) begin
+              next = UPDATE1;
+	   end
+	   else begin
+              next = UPDATE2;
+	   end
+	end
+	UPDATE2: begin
+	   if(ccif.dwait) begin
+              next = UPDATE2;
+	   end
+	   else begin
+              next = IDLE;
+	   end
+	end
+	WRITER: begin
+	   if(ccif.dwait) begin
+              next = WRITER;
+	   end
+	   else begin
+              next = IDLE;
+	   end
+	end
+	FLUSH_STATE1: begin
+	   if(setCount >= 8) begin
+              next = END_COUNT;
+	   end
+	   else if(!flushWait) begin
+              next = FLUSH_STATE2;
+	   end
+	   else begin
+              next = FLUSH_STATE1;
+	   end
+	end
+	FLUSH_STATE2: begin
+	   if(!flushWait) begin
+              next = FLUSH_STATE1;
+	   end
+	   else begin
+              next = FLUSH_STATE2;
+	   end
+	end
+	END_COUNT: begin
+	   if(!ccif.dwait) begin
+              next = END_OF_FLUSH;
+	   end
+	   else begin
+              next = END_COUNT;
+	   end
+	end
+	END_OF_FLUSH: begin
+	   next = END_OF_FLUSH;
+	end
+	default : next = IDLE;
+      endcase
+   end
+
+   always_comb 
+   begin
+
+      nextHitCount = hitCount;
+      nextWayCount = wayCount;
+      nextSetCount = setCount;
+      dnext.v = 0;
+      dnext.d = 0;
+
+      nextlru = lru[addr.index];
+      ccif.dstore = word_t'('0);
+      dcif.flushed = 0;
+
+      dvalnext.values[0] = '0;
+      dvalnext.values[1] = '0;
+      dnext.tag = addr.tag;
+      tagWEN = 0; 
+      valueWEN = 0;
+      flushWait = 1;
+
+      casez(cur)
+	IDLE: begin
+          ccif.daddr = word_t'('0);
+	   ccif.dREN = 0;
+	   ccif.dWEN = 0;
+	   if(dcif.dmemWEN & hit) begin
+	      if (addr.blockOffset) begin
+		 dvalnext.values[0] = dval.values[0];
+		 dvalnext.values[1] = dcif.dmemstore;
+              end
+	      else begin
+		dvalnext.values[0] = dcif.dmemstore;
+		dvalnext.values[1] = dval.values[1];
+	      end
+              tagWEN = 1;
+              valueWEN = 1;
+              dnext.v = 1;
+	      dnext.d = 1;
+	   end
+	   if((dcif.dmemREN | dcif.dmemWEN) & hit) begin
+              nextHitCount = hitCount + 1;
+              nextlru = !wWay;
+	   end
+	end
+	WRITE_BACK1: begin
+	   ccif.daddr = word_t'({dwrite.tag, addr.index, 3'b000});
+	   ccif.dstore = dvalwrite.values[0];
+	   ccif.dREN = 0;
+	   ccif.dWEN = 1;
+	end
+	WRITE_BACK2: begin
+	   ccif.daddr = word_t'({dwrite.tag, addr.index, 3'b100});
+	   ccif.dstore = dvalwrite.values[1];
+	   ccif.dREN = 0;
+	   ccif.dWEN = 1;
+	end
+	UPDATE1: begin
+	   if(!ccif.dwait) begin
+              nextHitCount = hitCount - 1;
+	   end
+	   ccif.daddr = word_t'({addr.tag, addr.index, 3'b000});
+	   dvalnext.values[0] = ccif.dload;
+	   valueWEN = 1;
+   	   ccif.dREN = 1;
+	   ccif.dWEN = 0;
+	end
+	UPDATE2: begin
+	   ccif.daddr = word_t'({addr.tag, addr.index, 3'b100});
+	   dvalnext.values[0] = dvalwrite.values[0];
+	   dvalnext.values[1] = ccif.dload;
+	   dnext.v = !ccif.dwait;
+	   dnext.d = 0;
+	   tagWEN = 1;
+	   valueWEN = 1;
+   	   ccif.dREN = 1;
+	   ccif.dWEN = 0;
+	end
+	WRITER: begin
+	   if(!ccif.dwait) begin
+              nextHitCount = hitCount - 1;
+	   end
+	   ccif.daddr = word_t'({addr.tag, addr.index, !addr.blockOffset, 2'b00});
+	   dnext.v = !ccif.dwait;
+	   tagWEN = 1;
+	   valueWEN = 1;
+	   if (addr.blockOffset) begin
+	      dvalnext.values[0] = ccif.dload;
+	      dvalnext.values[1] = dcif.dmemstore;
+	   end
+	   else begin
+	      dvalnext.values[0] = dcif.dmemstore;
+	      dvalnext.values[1] = ccif.dload;
+	     end
+   	   ccif.dREN = 1;
+	   ccif.dWEN = 0;
+	end
+	FLUSH_STATE1: begin
+	   ccif.dREN = 0;
+	   if(tags[setCount][wayCount].d) begin
+              flushWait = ccif.dwait;
+              ccif.dWEN = 1;
+              ccif.daddr = {tags[setCount][wayCount].tag, setCount[2:0], 3'b000};
+              ccif.dstore = values[setCount][wayCount].values[0];
+	   end
+	   else begin
+              ccif.dWEN = 0;
+              flushWait = 0;
+              ccif.daddr = word_t'('0);
+	   end
+	end
+	FLUSH_STATE2: begin
+	   ccif.dREN = 0;
+	   if(tags[setCount][wayCount].d) begin
+              flushWait = ccif.dwait;
+              ccif.dWEN = 1;
+              ccif.daddr = {tags[setCount][wayCount].tag, setCount[2:0], 3'b100};
+              ccif.dstore = values[setCount][wayCount].values[1];
+              if(!ccif.dwait) begin
+		 nextSetCount = wayCount ? setCount + 1'b1 : setCount;
+		 nextWayCount = !wayCount;
+              end
+	   end
+	   else begin
+              ccif.dWEN = 0;
+              flushWait = 0;
+              ccif.daddr = word_t'('0);
+	      if (wayCount) begin
+		 nextSetCount = setCount + 1'b1;
+	      end else begin
+		 nextSetCount = setCount;
+	      end
+              // nextSetCount = wayCount ? setCount + 1'b1 : setCount;
+              nextWayCount = !wayCount;
+	   end
+	end
+	END_COUNT: begin
+	   ccif.dREN = 0;
+	   ccif.dWEN = 1;
+	   ccif.daddr = 32'h3100;
+	   ccif.dstore = hitCount;
+	end
+	END_OF_FLUSH: begin
+	   ccif.dREN = 0;
+	   ccif.dWEN = 0;
+	   ccif.daddr = word_t'('0);
+	   dcif.flushed = 1;
+	end
+	default: begin
+	   ccif.dREN = 0;
+	   ccif.dWEN = 0;
+	   ccif.daddr = word_t'('0);
+	end
+      endcase
+   end
+
+endmodule

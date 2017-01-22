@@ -1,0 +1,25 @@
+
+`ifndef FORWARDING_UNIT_IF_VH
+`define FORWARDING_UNIT_IF_VH
+
+// all types
+`include "cpu_types_pkg.vh"
+`include "pipeline_types_pkg.vh"
+
+interface fowarding_unit_if;
+  import cpu_types_pkg::*;
+  import pipeline_types_pkg::*;
+
+logic RegWrite;
+regbits_t idex_rt, idex_rs;
+logic [1:0] fwa, fwb;
+
+  modport fu(
+    input idex_rt, idex_rs,
+    output fwa, fwb
+
+  );
+
+endinterface
+
+`endif

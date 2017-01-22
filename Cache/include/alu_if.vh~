@@ -1,0 +1,31 @@
+/*
+Sungsoo Kim
+MG240
+ALU interface
+*/
+`ifndef ALU_IF_VH
+`define ALU_IF_VH
+`include "cpu_types_pkg.vh"
+
+interface alu_if;
+  import cpu_types_pkg::*;
+
+  logic     nf, zf, of;//neg zero ov
+  word_t    pout, port_a, port_b;//out and inputs
+  aluop_t opcode;
+
+
+  modport aluif (
+    input   opcode, port_a, port_b,
+    output  nf, zf, of, pout
+  );
+
+
+  modport tb (
+    input   nf, zf, of, pout,
+    output  opcode, port_a, port_b
+  );
+endinterface
+
+`endif //REGISTER_FILE_IF_VH
+

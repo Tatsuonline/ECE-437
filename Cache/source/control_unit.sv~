@@ -1,0 +1,194 @@
+`include "cpu_types_pkg.vh"
+`include "control_unit_if.vh"
+
+module control_unit 
+
+import cpu_types_pkg::*;
+(
+  control_unit_if.cuif cuif
+);
+
+//shamt, branch(bne, beq) 
+//equal, jump, link, 
+//Jr is jr.....
+
+
+  // number of cpus for cc
+  parameter CPUS = 1;
+//////add [0] to all memcon signals ...later....
+////     6   5   5 5  5     6
+////     op rs  rt rd shamt funct
+//// add:0 [5] [5] 0 0 32 
+////addu:0 [5] [5] 0 0 33 
+//// sub:0 [5] [5] 0 0 34 
+////subu:0 [5] [5] 0 0 35
+//// and:0 [5] [5] 0 0 36
+//// or :0 [5] [5] 0 0 37
+//// nor:0 [5] [5] 0 0 39
+//// sll:0 [5] [5] 0 0 0
+//// srl:0 [5] [5] 0 0 2
+//// slt:0 [5] [5] 0 0 42
+////sltu:0 [5] [5] 0 0 43
+//// jr :0 [5] [5] 0 0 08
+
+opcode_t opcode;
+funct_t funct;
+r_t rtypei;
+//assign rtypei=cuif.instr;
+assign opcode = cuif.opcode;
+assign funct = cuif.funct; //to get rid of glitch, pass....but still glitch....
+
+always_comb begin
+cuif.alu_op=ALU_ADD;
+cuif.Shamt=0; cuif.Alusrc=0; cuif.MemtoReg=0;
+cuif.Branch=0; cuif.Equal=0; cuif.Jump=0; cuif.RegWrite=0; 
+cuif.PCWait=0; cuif.RegDest=0; cuif.Link=0; 
+cuif.Ext=0; cuif.Jr=0; cuif.LUI=0; cuif.halt=0; cuif.bne=0; cuif.beq=0;
+cuif.ImmtoReg=0; cuif.RegtoPc=0;
+cuif.dRead=0; cuif.dWrite=0;
+
+casez(opcode)
+  RTYPE: begin
+    casez(funct)
+       ADDU : begin
+	 cuif.RegWrite=1;
+	 end
+       AND: begin
+	 cuif.alu_op=ALU_AND;
+	 cuif.RegWrite=1;
+	 end
+       OR: begin
+	 cuif.alu_op=ALU_OR;
+	 cuif.RegWrite=1;
+	 end
+       NOR: begin
+	 cuif.alu_op=ALU_NOR;
+	 cuif.RegWrite=1;
+	 end
+       SLT: begin
+	 cuif.alu_op=ALU_SLT;
+	 cuif.RegWrite=1;
+	 end
+       SLTU: begin
+	 cuif.alu_op=ALU_SLTU;
+	 cuif.RegWrite=1;
+	 end
+       SLL: begin
+	 cuif.alu_op=ALU_SLL;
+	 cuif.RegWrite=1;
+	 cuif.Shamt=1;
+	 cuif.Alusrc=1;
+	 end
+       SRL: begin
+	 cuif.alu_op=ALU_SRL;
+	 cuif.RegWrite=1;
+	 cuif.Shamt=1;
+	 cuif.Alusrc=1;
+	 end
+       SUBU: begin
+	 cuif.alu_op=ALU_SUB;
+	 cuif.RegWrite=1;
+	 end
+       XOR: begin
+	 cuif.alu_op=ALU_XOR;
+	 cuif.RegWrite=1;
+	 end
+       JR: begin
+	 cuif.Jr=1;
+         cuif.RegtoPc=1;
+         end
+    endcase
+  end   // not r-type below  
+  ADDIU: begin
+    cuif.RegDest=1;
+    cuif.Ext=1;
+    cuif.Alusrc=1;
+    cuif.RegWrite=1;
+  end
+  ANDI: begin
+    cuif.alu_op=ALU_AND;
+    cuif.RegDest=1;
+    cuif.Alusrc=1;
+    cuif.RegWrite=1;
+  end
+  BEQ: begin
+    cuif.alu_op=ALU_SUB;
+    cuif.beq=1;
+    cuif.Equal=1;
+    cuif.Branch=1;
+  end
+  BNE: begin
+    cuif.alu_op=ALU_SUB;
+    cuif.bne=1;
+    cuif.Branch=1;
+  end
+  LUI: begin
+    cuif.alu_op=ALU_NOR;
+    cuif.ImmtoReg=1;
+    cuif.RegDest=1;
+    cuif.Alusrc=1;
+    cuif.LUI=1;
+    cuif.RegWrite=1;
+  end
+  LW: begin
+    cuif.Alusrc=1;
+    cuif.alu_op=ALU_ADD;
+    cuif.RegDest=1;
+    cuif.Ext=1;
+    cuif.MemtoReg=1;
+    cuif.dRead=1;
+    cuif.RegWrite=1;
+//    cuif.Load=1;
+  end
+
+  ORI: begin
+    cuif.alu_op=ALU_OR;
+    cuif.RegDest=1;
+    cuif.Alusrc=1;
+    cuif.RegWrite=1;
+  end
+  SLTI: begin
+    cuif.alu_op=ALU_SLT;
+    cuif.RegDest=1;
+    cuif.Alusrc=1;
+    cuif.RegWrite=1;
+    cuif.Ext=1;
+  end
+  SLTIU: begin
+    cuif.alu_op=ALU_SLT;
+    cuif.RegDest=1;
+    cuif.Alusrc=1;
+    cuif.RegWrite=1;
+    cuif.Ext=1;
+  end
+  SW: begin
+    cuif.Alusrc=1;
+    cuif.dWrite=1;
+  end
+  XORI: begin
+    cuif.alu_op=ALU_XOR;
+    cuif.RegDest=1;
+    cuif.Alusrc=1;
+    cuif.RegWrite=1;
+  end    
+  J: begin
+   cuif.Jump=1;
+  end    
+  JAL: begin
+    cuif.Link=1;
+    cuif.Jump=1;
+    cuif.RegDest=1;
+    cuif.RegWrite=1;
+  end
+  HALT: begin
+    cuif.PCWait=1;
+    cuif.halt=1;
+  end    
+
+  default: begin
+  end
+
+  endcase
+end
+endmodule
+

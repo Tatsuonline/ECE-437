@@ -1,0 +1,16 @@
+Fitter Status : Successful - Wed Sep 16 14:10:00 2015
+Quartus II 32-bit Version : 13.0.1 Build 232 06/12/2013 SP 1 SJ Full Version
+Revision Name : singlecycle
+Top-level Entity Name : system_fpga
+Family : Cyclone IV E
+Device : EP4CE115F29C7
+Timing Models : Final
+Total logic elements : 4,459 / 114,480 ( 4 % )
+    Total combinational functions : 3,472 / 114,480 ( 3 % )
+    Dedicated logic registers : 2,717 / 114,480 ( 2 % )
+Total registers : 2717
+Total pins : 106 / 529 ( 20 % )
+Total virtual pins : 0
+Total memory bits : 536,960 / 3,981,312 ( 13 % )
+Embedded Multiplier 9-bit elements : 0 / 532 ( 0 % )
+Total PLLs : 0 / 4 ( 0 % )
